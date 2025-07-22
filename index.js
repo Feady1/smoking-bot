@@ -38,4 +38,6 @@ schedule.scheduleJob('50 23 * * *', () => summarizeDay(client));
 
 app.get('/', (req, res) => res.send('LINE Bot Running.'));
 
-app.listen(port, () => console.log(`Bot running on ${port}`));
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server running on port ${port}`);
+});
