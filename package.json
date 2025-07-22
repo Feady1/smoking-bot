@@ -1,11 +1,13 @@
 {
   "name": "smoking-bot",
   "version": "1.0.0",
+  "description": "A LINE smoking reduction bot.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "linebot": "^1.5.0"
   }
 }
