@@ -5,7 +5,15 @@ const schedule = require('node-schedule');
 const fs = require('fs');
 // Import updated handlers from logic: handleAdjust for numeric adjustments, handleCommand for slash commands,
 // handleInteraction for generic messages, resetDaily and summarizeDay for scheduled tasks.
-const { handleAdjust, handleCommand, resetDaily, summarizeDay, handleInteraction } = require('./logic');
+const {
+  handleAdjust,
+  handleCommand,
+  resetDaily,
+  summarizeDay,
+  handleInteraction,
+  getTaipeiWeather,
+  composeWeatherReport
+} = require('./logic');
 require('dotenv').config();
 
 const app = express();
@@ -47,6 +55,18 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 schedule.scheduleJob('5 0 * * *', { tz: 'Asia/Taipei' }, () => resetDaily());
 // 每日 23:50 依台北時區統計與發獎勵
 schedule.scheduleJob('50 23 * * *', { tz: 'Asia/Taipei' }, () => summarizeDay(client));
+
+// 每日 06:30 發送台北市天氣預報
+schedule.scheduleJob('30 6 * * *', { tz: 'Asia/Taipei' }, async () => {
+  try {
+    const weather = await getTaipeiWeather();
+    const report = composeWeatherReport(weather);
+    await client.pushMessage(process.env.USER_ID, { type: 'text', text: report });
+    console.log('天氣預報已發送');
+  } catch (err) {
+    console.error('天氣預報發送失敗', err);
+  }
+});
 
 app.get('/', (req, res) => res.send('LINE Bot Running.'));
 

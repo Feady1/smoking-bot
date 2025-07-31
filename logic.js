@@ -7,6 +7,7 @@
 // interactions.
 
 const fs = require('fs');
+const https = require('https');
 const path = './data.json';
 const rewards = require('./rewards.json');
 
@@ -90,6 +91,95 @@ const emoticons = [
 
 // Sound words to accompany actions.
 const sounds = ['啾啾', '撲通', '嗚嗚', '呀～'];
+
+/* --------------------------------------------------------------------------
+ * Weather utilities
+ * ------------------------------------------------------------------------ */
+
+// Mapping of Open‑Meteo weather codes to descriptive Chinese phrases.  The codes
+// follow the WMO standard where 0 denotes clear skies and increasing numbers
+// represent increasing severity.  Only commonly occurring codes are mapped; any
+// unknown codes will fall back to showing the numeric code.
+const weatherCodeMap = {
+  0: '晴朗',
+  1: '少雲',
+  2: '半雲',
+  3: '多雲',
+  45: '有霧',
+  48: '霧凇',
+  51: '輕微霧雨',
+  53: '中度霧雨',
+  55: '強霧雨',
+  56: '輕微冰霧雨',
+  57: '強冰霧雨',
+  61: '小雨',
+  63: '中雨',
+  65: '大雨',
+  66: '輕微冰雨',
+  67: '強冰雨',
+  71: '小雪',
+  73: '中雪',
+  75: '大雪',
+  77: '雪粒',
+  80: '陣雨',
+  81: '中陣雨',
+  82: '大陣雨',
+  85: '陣雪',
+  86: '強陣雪',
+  95: '雷雨',
+  96: '雷雨伴有冰雹',
+  99: '雷雨伴有強冰雹'
+};
+
+/**
+ * Fetch the current and daily weather for Taipei City using the Open‑Meteo API.
+ * The API does not require an API key.  Returns an object containing the
+ * current temperature, maximum and minimum temperatures for today and a
+ * descriptive string for the current weather code.  In case of failure, the
+ * returned promise will reject.
+ */
+function getTaipeiWeather () {
+  const url =
+    'https://api.open-meteo.com/v1/forecast?latitude=25.0478&longitude=121.5319&current_weather=true&daily=temperature_2m_max,temperature_2m_min&timezone=Asia%2FTaipei';
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, res => {
+        let body = '';
+        res.on('data', chunk => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(body);
+            const currTemp = json.current_weather.temperature;
+            const code = json.current_weather.weathercode;
+            const max = json.daily.temperature_2m_max[0];
+            const min = json.daily.temperature_2m_min[0];
+            const desc = weatherCodeMap[code] || `代碼 ${code}`;
+            resolve({ currentTemp: currTemp, max, min, codeDesc: desc });
+          } catch (e) {
+            reject(e);
+          }
+        });
+      })
+      .on('error', err => reject(err));
+  });
+}
+
+/**
+ * Compose a weather report string for Taipei using the given weather object.
+ * Adds a cute reaction from 悠悠 to integrate with the virtual character’s
+ * behaviour module.  The reaction is constructed using buildReaction.
+ */
+function composeWeatherReport (weather) {
+  const base = '悠悠抬頭看看窗外的天氣，';
+  const reaction = buildReaction(base);
+  return (
+    `台北市今日天氣：${weather.codeDesc}。\n` +
+    `現在溫度 ${weather.currentTemp}°C，最高 ${weather.max}°C，最低 ${weather.min}°C。\n` +
+    reaction
+  );
+}
 
 // Base descriptions for various user actions. Each entry may contain
 // multiple variations to allow additional combinations.
@@ -202,9 +292,19 @@ function handleAdjust (event, client, amount) {
  *   /重設 – reset today’s count to zero.
  *   /說明 – provide help text.
  */
-function handleCommand (msg, event, client) {
+async function handleCommand (msg, event, client) {
   const data = loadData();
   autoResetIfNewDay(data);
+  // Weather inquiry command: fetch Taipei weather and reply with a report.
+  if (msg === '/天氣' || msg.toLowerCase() === '/weather') {
+    try {
+      const weather = await getTaipeiWeather();
+      const report = composeWeatherReport(weather);
+      return client.replyMessage(event.replyToken, { type: 'text', text: report });
+    } catch (err) {
+      return client.replyMessage(event.replyToken, { type: 'text', text: '取得天氣資料失敗。' });
+    }
+  }
   if (msg === '/查詢' || msg === '/查詢今日') {
     return client.replyMessage(event.replyToken, {
       type: 'text',
@@ -231,6 +331,7 @@ function handleCommand (msg, event, client) {
       '/查詢昨日：查看昨日抽菸數',
       '/重設：重設今日計數為 0',
       '/說明：顯示這段說明',
+      '/天氣 或 /weather：查詢台北市今日氣象',
       '其他訊息將視為對悠悠的互動，牠會以可愛的動作回應喔'
     ].join('\n');
     return client.replyMessage(event.replyToken, { type: 'text', text: help });
@@ -286,5 +387,7 @@ module.exports = {
   handleCommand,
   resetDaily,
   summarizeDay,
-  handleInteraction
+  handleInteraction,
+  getTaipeiWeather,
+  composeWeatherReport
 };
