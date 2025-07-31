@@ -19,6 +19,14 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Global error handlers to prevent the process from crashing on unhandled errors.
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', err => {
+  console.error('Uncaught Exception:', err);
+});
+
 const config = {
   channelAccessToken: process.env.LINE_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET
@@ -54,7 +62,13 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 // 每日 00:05 依台北時區重置
 schedule.scheduleJob('5 0 * * *', { tz: 'Asia/Taipei' }, () => resetDaily());
 // 每日 23:50 依台北時區統計與發獎勵
-schedule.scheduleJob('50 23 * * *', { tz: 'Asia/Taipei' }, () => summarizeDay(client));
+schedule.scheduleJob('50 23 * * *', { tz: 'Asia/Taipei' }, async () => {
+  try {
+    await summarizeDay(client);
+  } catch (err) {
+    console.error('日結訊息發送失敗', err);
+  }
+});
 
 // 每日 06:30 發送台北市天氣預報
 schedule.scheduleJob('30 6 * * *', { tz: 'Asia/Taipei' }, async () => {

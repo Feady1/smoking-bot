@@ -587,7 +587,7 @@ function resetDaily () {
  * increment the streak and award a prize (capped by rewards array length).
  * Sends messages via pushMessage including images and text where applicable.
  */
-function summarizeDay (client) {
+async function summarizeDay (client) {
   const data = loadData();
   autoResetIfNewDay(data);
   let reward = null;
@@ -609,8 +609,12 @@ function summarizeDay (client) {
     messages.push({ type: 'image', originalContentUrl: reward.image, previewImageUrl: reward.image });
     messages.push({ type: 'text', text: reward.text });
   }
-  client.pushMessage(process.env.USER_ID, messages);
-  console.log('日結訊息發送完畢');
+  try {
+    await client.pushMessage(process.env.USER_ID, messages);
+    console.log('日結訊息發送完畢');
+  } catch (err) {
+    console.error('推送日結訊息失敗', err);
+  }
 }
 
 module.exports = {
