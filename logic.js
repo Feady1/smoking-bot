@@ -138,31 +138,88 @@ const weatherCodeMap = {
  * descriptive string for the current weather code.  In case of failure, the
  * returned promise will reject.
  */
+/**
+ * Fetch detailed weather and air quality data for Taipei City using the
+ * Open‑Meteo Weather and Air Quality APIs.  In addition to the current
+ * conditions and daily maximum/minimum temperatures, this function also
+ * retrieves the next six hours of temperature, relative humidity and
+ * precipitation probability along with air quality indices including UV
+ * index and fine particulate concentrations.  All values are averaged or
+ * summarised to present a concise overview.  The function returns a
+ * promise that resolves to an object with the following properties:
+ *   currentTemp – current temperature in °C
+ *   max – daily maximum temperature
+ *   min – daily minimum temperature
+ *   codeDesc – Chinese description of the current weather code
+ *   nextMax – maximum temperature over the next six hours
+ *   nextMin – minimum temperature over the next six hours
+ *   avgHumidity – average relative humidity (%) over the next six hours
+ *   avgPrecip – average precipitation probability (%) over the next six hours
+ *   uvIndex – current UV index
+ *   pm25 – current PM2.5 concentration (µg/m³)
+ *   pm10 – current PM10 concentration (µg/m³)
+ */
 function getTaipeiWeather () {
-  const url =
-    'https://api.open-meteo.com/v1/forecast?latitude=25.0478&longitude=121.5319&current_weather=true&daily=temperature_2m_max,temperature_2m_min&timezone=Asia%2FTaipei';
-  return new Promise((resolve, reject) => {
-    https
-      .get(url, res => {
-        let body = '';
-        res.on('data', chunk => {
-          body += chunk;
-        });
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(body);
-            const currTemp = json.current_weather.temperature;
-            const code = json.current_weather.weathercode;
-            const max = json.daily.temperature_2m_max[0];
-            const min = json.daily.temperature_2m_min[0];
-            const desc = weatherCodeMap[code] || `代碼 ${code}`;
-            resolve({ currentTemp: currTemp, max, min, codeDesc: desc });
-          } catch (e) {
-            reject(e);
-          }
-        });
-      })
-      .on('error', err => reject(err));
+  // Endpoint for weather forecast with hourly variables: temperature, humidity and precipitation probability.
+  const weatherUrl =
+    'https://api.open-meteo.com/v1/forecast?latitude=25.0478&longitude=121.5319&current_weather=true&hourly=temperature_2m,relativehumidity_2m,precipitation_probability&daily=temperature_2m_max,temperature_2m_min&forecast_hours=6&timezone=Asia%2FTaipei';
+  // Endpoint for air quality including UV index and particulate matter for the next six hours.
+  const airUrl =
+    'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=25.0478&longitude=121.5319&hourly=uv_index,pm2_5,pm10&forecast_hours=6&timezone=Asia%2FTaipei';
+  // Helper to perform HTTPS GET and parse JSON.
+  function fetchJSON (url) {
+    return new Promise((resolve, reject) => {
+      https
+        .get(url, res => {
+          let body = '';
+          res.on('data', chunk => (body += chunk));
+          res.on('end', () => {
+            try {
+              resolve(JSON.parse(body));
+            } catch (e) {
+              reject(e);
+            }
+          });
+        })
+        .on('error', err => reject(err));
+    });
+  }
+  return Promise.all([fetchJSON(weatherUrl), fetchJSON(airUrl)]).then(([w, a]) => {
+    // Extract current weather and daily max/min.
+    const currTemp = w.current_weather.temperature;
+    const code = w.current_weather.weathercode;
+    const max = w.daily.temperature_2m_max[0];
+    const min = w.daily.temperature_2m_min[0];
+    const desc = weatherCodeMap[code] || `代碼 ${code}`;
+    // Extract next 6 hours hourly arrays (length may be less than 6 if API returns shorter horizon).
+    const temps = (w.hourly.temperature_2m || []).slice(0, 6);
+    const hums = (w.hourly.relativehumidity_2m || []).slice(0, 6);
+    const precs = (w.hourly.precipitation_probability || []).slice(0, 6);
+    const nextMax = temps.length ? Math.max(...temps) : null;
+    const nextMin = temps.length ? Math.min(...temps) : null;
+    const avgHumidity = hums.length
+      ? Math.round(hums.reduce((a, b) => a + b, 0) / hums.length)
+      : null;
+    const avgPrecip = precs.length
+      ? Math.round(precs.reduce((a, b) => a + b, 0) / precs.length)
+      : null;
+    // Air quality: take first hour as representative for current values.
+    const uvIndex = a.hourly && a.hourly.uv_index ? a.hourly.uv_index[0] : null;
+    const pm25 = a.hourly && a.hourly.pm2_5 ? a.hourly.pm2_5[0] : null;
+    const pm10 = a.hourly && a.hourly.pm10 ? a.hourly.pm10[0] : null;
+    return {
+      currentTemp: currTemp,
+      max,
+      min,
+      codeDesc: desc,
+      nextMax,
+      nextMin,
+      avgHumidity,
+      avgPrecip,
+      uvIndex,
+      pm25,
+      pm10
+    };
   });
 }
 
@@ -174,11 +231,30 @@ function getTaipeiWeather () {
 function composeWeatherReport (weather) {
   const base = '悠悠抬頭看看窗外的天氣，';
   const reaction = buildReaction(base);
-  return (
-    `台北市今日天氣：${weather.codeDesc}。\n` +
-    `現在溫度 ${weather.currentTemp}°C，最高 ${weather.max}°C，最低 ${weather.min}°C。\n` +
-    reaction
-  );
+  // Build lines for the detailed report.  Only include optional values when available.
+  const lines = [];
+  lines.push(`台北市今日天氣：${weather.codeDesc}。`);
+  lines.push(`現在溫度 ${weather.currentTemp}°C，最高 ${weather.max}°C，最低 ${weather.min}°C。`);
+  // Add next‑6‑hour summary if we have temperature range.
+  if (weather.nextMin != null && weather.nextMax != null) {
+    lines.push(`未來6小時氣溫範圍 ${weather.nextMin}°C～${weather.nextMax}°C。`);
+  }
+  // Add humidity and precipitation probability.
+  if (weather.avgPrecip != null) {
+    lines.push(`平均降雨機率 ${weather.avgPrecip}%` + (weather.avgHumidity != null ? `，平均濕度 ${weather.avgHumidity}%` : '') + '。');
+  } else if (weather.avgHumidity != null) {
+    lines.push(`平均濕度 ${weather.avgHumidity}%。`);
+  }
+  // Add UV index and particulate matter if available.
+  if (weather.uvIndex != null) {
+    lines.push(`紫外線指數 ${weather.uvIndex}` + (weather.pm25 != null ? `，PM2.5 ${weather.pm25}µg/m³` : '') + (weather.pm10 != null ? `，PM10 ${weather.pm10}µg/m³` : '') + '。');
+  } else if (weather.pm25 != null || weather.pm10 != null) {
+    const aq = [];
+    if (weather.pm25 != null) aq.push(`PM2.5 ${weather.pm25}µg/m³`);
+    if (weather.pm10 != null) aq.push(`PM10 ${weather.pm10}µg/m³`);
+    lines.push(aq.join('，') + '。');
+  }
+  return lines.join('\n') + '\n' + reaction;
 }
 
 // Base descriptions for various user actions. Each entry may contain
@@ -199,6 +275,121 @@ const actionBases = {
   tv: [
     '悠悠盯著螢幕看得目不轉睛，偶爾歪頭表達好奇',
     '悠悠坐在你旁邊看電視，時不時拍打尾巴示意你注意精彩畫面'
+  ],
+  // 呼喊名字時的反應
+  name: [
+    '悠悠聽到你叫牠名字，眨了眨眼，翻了個身抱著尾巴繼續打瞌睡',
+    '悠悠抬起頭，耳朵動了動，用小爪子拍拍自己的胸口像是在回答'
+  ],
+  // 給點心或餵食時的反應
+  feed: [
+    '悠悠聞到點心的味道，眼睛瞬間亮了起來，雙手抱住點心啃啃啃',
+    '悠悠伸出小爪子接過點心，尾巴開心地左右搖晃，嘴裡發出啾啾聲'
+  ],
+  // 擁抱或抱抱時的反應
+  hug: [
+    '悠悠被你抱在懷裡，乖乖地窩著，偶爾用小爪子拍拍你的手臂',
+    '悠悠用尾巴纏住你的手臂，眼睛眯起來，一臉滿足地蹭著你'
+  ],
+  // 睡覺或打瞌睡相關的反應
+  sleep: [
+    '悠悠打了個大哈欠，伸展四肢後蜷縮成團慢慢閉上眼睛',
+    '悠悠抱著自己的尾巴，眼皮越來越沉，最後發出均勻的呼吸聲睡著了'
+  ],
+  // 玩耍或逗弄時的反應
+  play: [
+    '悠悠興奮地在水面上撲騰，尾巴不時拍出水花，邀請你一起玩',
+    '悠悠翻來覆去，抓起小石頭拋向空中又用爪子接住，玩得不亦樂乎'
+  ],
+  // 吃東西相關的反應
+  eat: [
+    '悠悠咬著小魚干，臉頰鼓鼓的，吃得津津有味',
+    '悠悠拿起貝殼當盤子，慢慢品嚐著點心，偶爾抬眼看看你',
+    '悠悠抱著食物啃啃啃，尾巴滿足地擺動'
+  ],
+  // 喝水相關的反應
+  drink: [
+    '悠悠捧起清水，嗅了嗅後慢慢啜飲，發出滿足的嘟嚕聲',
+    '悠悠用爪子舀水喝，喝完打了個嗝，像是在說謝謝',
+    '悠悠一邊喝水一邊用尾巴拍出水花，玩的很開心'
+  ],
+  // 運動或跑步相關的反應
+  exercise: [
+    '悠悠在水面上快速划動，小爪子撥水像是在運動',
+    '悠悠跑來跑去，尾巴左右擺動，整個人活力十足',
+    '悠悠伸展四肢做運動，最後躺下喘口氣'
+  ],
+  // 跳舞相關的反應
+  dance: [
+    '悠悠隨著無形的音樂在水中扭動，像是在跳舞',
+    '悠悠站起來兩腳踩水，跟著節奏擺尾，很有節奏感',
+    '悠悠雙爪交叉拍掌，轉圈圈跳起舞蹈'
+  ],
+  // 唱歌相關的反應
+  sing: [
+    '悠悠張開嘴巴發出啾啾聲，像在唱歌',
+    '悠悠閉上眼睛輕哼著，尾巴隨節奏晃動',
+    '悠悠拍著胸口發出和諧的音節，好像在演奏'
+  ],
+  // 看書閱讀相關的反應
+  read: [
+    '悠悠盯著書本的字，看得很認真，偶爾翻動頁面',
+    '悠悠拿著一本小冊子，爪子指著字慢慢學習',
+    '悠悠靠著枕頭看書，眼神專注，尾巴微微搖擺'
+  ],
+  // 畫畫相關的反應
+  draw: [
+    '悠悠用爪子在沙地上畫出圖案，畫完欣賞自己的作品',
+    '悠悠抓起小石子當筆，在濕沙上畫畫，畫出可愛的心形',
+    '悠悠把海藻排列成圖案，像在創作藝術'
+  ],
+  // 打掃或清潔相關的反應
+  clean: [
+    '悠悠用尾巴掃拂著身邊的沙子，把小窩整理乾淨',
+    '悠悠拿起小刷子刷著自己的毛，打理得乾乾淨淨',
+    '悠悠把貝殼堆疊整齊，整理完拍拍手滿意地點頭'
+  ],
+  // 工作相關的反應
+  work: [
+    '悠悠戴上小帽子，專注地忙著整理自己的藏寶箱',
+    '悠悠仔細檢查每一顆貝殼，就像在專心工作',
+    '悠悠在水中來回搬運小石頭，嘴裡發出努力的啾啾聲'
+  ],
+  // 購物或逛街相關的反應
+  shop: [
+    '悠悠抱著一堆貝殼像是在購物，挑挑選選',
+    '悠悠看到漂亮的石頭興奮地拿起來，像是在逛街',
+    '悠悠拿著小袋子裝滿小零食，開心地回家'
+  ],
+  // 烹飪相關的反應
+  cook: [
+    '悠悠把海藻和貝殼放在一起攪拌，像在做料理',
+    '悠悠認真地用爪子捏著小魚干，做成漂亮的擺盤',
+    '悠悠一邊烹飪一邊偷吃材料，眼睛眯成一條線'
+  ],
+  // 學習或讀書相關的反應
+  study: [
+    '悠悠戴著眼鏡記筆記，努力學習新知識',
+    '悠悠把耳朵貼近書本，似乎想聽懂裡面的聲音',
+    '悠悠看著教科書皺眉，尾巴拍打水面彷彿在思考'
+  ],
+  // 冥想或靜坐相關的反應
+  meditate: [
+    '悠悠閉上眼睛，雙爪合十，在水中靜靜冥想',
+    '悠悠盤著尾巴，深呼吸放鬆，周圍氣氛平靜',
+    '悠悠坐在石頭上沉思，偶爾發出柔和的啾聲'
+  ],
+  // 上網或滑手機相關的反應
+  surf: [
+    '悠悠用爪子敲敲貝殼，就像在上網搜尋東西',
+    '悠悠盯著漂浮的海草，看得入神，像在刷社群',
+    '悠悠滑動小石頭，翻看貝殼，就像在滑手機'
+  ],
+  // 旅行或冒險相關的反應
+  travel: [
+    '悠悠背著小包包，踏出小窩像要去冒險',
+    '悠悠坐在漂浮的木頭上，眺望遠方像在旅行',
+    '悠悠揮手告別，跳入水中展開新的旅程'
   ],
   default: [
     '悠悠歪著頭看看你，不太明白但還是可愛地揮了揮爪',
@@ -233,6 +424,46 @@ function getActionCategory (message) {
   if (/(晚安|good\s*night)/i.test(message)) return 'night';
   if (/(摸|撫摸|摸摸|pat)/i.test(message)) return 'pat';
   if (/(看電視|看电视|tv)/i.test(message)) return 'tv';
+  // Detect calling the otter's name or similar phrases
+  if (/(名字|叫悠悠|叫牠|叫你|呼喚)/i.test(message)) return 'name';
+  // Detect feeding or giving snacks/food
+  if (/(點心|餵|零食|食物|snack)/i.test(message)) return 'feed';
+  // Detect hugging or cuddling actions
+  if (/(抱抱|擁抱|抱你|抱緊)/i.test(message)) return 'hug';
+  // Detect sleep related actions
+  if (/(睡覺|打瞌睡|睡一下|sleep|nap)/i.test(message)) return 'sleep';
+  // Detect play or game actions
+  if (/(玩|遊戲|play|逗弄|耍|逗)/i.test(message)) return 'play';
+  // Detect eating actions
+  if (/(吃飯|吃東西|吃|用餐)/i.test(message)) return 'eat';
+  // Detect drinking actions
+  if (/(喝水|喝飲料|喝|飲)/i.test(message)) return 'drink';
+  // Detect exercise or running
+  if (/(運動|跑步|散步|健身|走路)/i.test(message)) return 'exercise';
+  // Detect dancing
+  if (/(跳舞|舞蹈|跳|舞)/i.test(message)) return 'dance';
+  // Detect singing
+  if (/(唱歌|唱|歌)/i.test(message)) return 'sing';
+  // Detect reading
+  if (/(看書|閱讀|讀書|書)/i.test(message)) return 'read';
+  // Detect drawing or painting
+  if (/(畫畫|畫圖|繪畫|畫)/i.test(message)) return 'draw';
+  // Detect cleaning or washing
+  if (/(打掃|清理|清潔|掃地|洗澡)/i.test(message)) return 'clean';
+  // Detect working
+  if (/(工作|上班|辦公)/i.test(message)) return 'work';
+  // Detect shopping
+  if (/(購物|買東西|逛街|shopping|買)/i.test(message)) return 'shop';
+  // Detect cooking
+  if (/(烹飪|煮飯|做菜|料理)/i.test(message)) return 'cook';
+  // Detect studying
+  if (/(學習|念書|study)/i.test(message)) return 'study';
+  // Detect meditation
+  if (/(冥想|靜坐|meditate)/i.test(message)) return 'meditate';
+  // Detect surfing/internet usage
+  if (/(上網|滑手機|用手機|internet|社群)/i.test(message)) return 'surf';
+  // Detect travelling
+  if (/(旅行|旅遊|出門|遠足|外出)/i.test(message)) return 'travel';
   return 'default';
 }
 
@@ -331,7 +562,7 @@ async function handleCommand (msg, event, client) {
       '/查詢昨日：查看昨日抽菸數',
       '/重設：重設今日計數為 0',
       '/說明：顯示這段說明',
-      '/天氣 或 /weather：查詢台北市今日氣象',
+      '/天氣 或 /weather：查詢台北市今日氣象與未來 6 小時概況（溫度、降雨、濕度、紫外線、空氣品質）',
       '其他訊息將視為對悠悠的互動，牠會以可愛的動作回應喔'
     ].join('\n');
     return client.replyMessage(event.replyToken, { type: 'text', text: help });
