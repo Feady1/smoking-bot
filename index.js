@@ -2,7 +2,6 @@
 const express = require('express');
 const line = require('@line/bot-sdk');
 const schedule = require('node-schedule');
-// Remove unused fs import; bring in new handler from logic.js
 const { handleAdjust, handleCommand, resetDaily, summarizeDay } = require('./logic');
 require('dotenv').config();
 
@@ -21,13 +20,12 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
   const results = await Promise.all(events.map(event => {
     if (event.type === 'message' && event.message.type === 'text') {
       const msg = event.message.text.trim();
-      // Adjust counts when message starts with optional '/' followed by '+' or '-' and digits
+      // Detect numeric adjustment messages of the form +n or -n, optionally prefaced with '/'
       if (/^\/?[+-]\d+$/.test(msg)) {
-        // Remove leading '/' if present before parsing integer
         const cleaned = msg.startsWith('/') ? msg.slice(1) : msg;
         return handleAdjust(event, client, parseInt(cleaned, 10));
       }
-      // Delegate commands beginning with '/' that are not numeric adjustments
+      // Dispatch commands beginning with '/' that are not numeric adjustments
       if (msg.startsWith('/')) return handleCommand(msg, event, client);
     }
     return Promise.resolve(null);
