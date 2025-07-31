@@ -2,7 +2,10 @@
 const express = require('express');
 const line = require('@line/bot-sdk');
 const schedule = require('node-schedule');
-const { handleAdjust, handleCommand, resetDaily, summarizeDay } = require('./logic');
+const fs = require('fs');
+// Import updated handlers from logic: handleAdjust for numeric adjustments, handleCommand for slash commands,
+// handleInteraction for generic messages, resetDaily and summarizeDay for scheduled tasks.
+const { handleAdjust, handleCommand, resetDaily, summarizeDay, handleInteraction } = require('./logic');
 require('dotenv').config();
 
 const app = express();
@@ -20,23 +23,30 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
   const results = await Promise.all(events.map(event => {
     if (event.type === 'message' && event.message.type === 'text') {
       const msg = event.message.text.trim();
-      // Detect numeric adjustment messages of the form +n or -n, optionally prefaced with '/'
-      if (/^\/?[+-]\d+$/.test(msg)) {
+      // Determine if message is a numeric adjustment: +n, -n, /+n, /-n
+      if (/^[+/\-][+\-]?\d+$/.test(msg)) {
+        // Strip leading slash if present and parse signed integer value
         const cleaned = msg.startsWith('/') ? msg.slice(1) : msg;
-        return handleAdjust(event, client, parseInt(cleaned, 10));
+        const amount = parseInt(cleaned);
+        return handleAdjust(event, client, amount);
       }
-      // Dispatch commands beginning with '/' that are not numeric adjustments
-      if (msg.startsWith('/')) return handleCommand(msg, event, client);
+      // Slash commands
+      if (msg.startsWith('/')) {
+        return handleCommand(msg, event, client);
+      }
+      // Other messages are interactions with 悠悠
+      return handleInteraction(event, client, msg);
     }
+    // Ignore non-text events
     return Promise.resolve(null);
   }));
   res.json(results);
 });
 
-// 每日 00:05（台北時間）重置
-schedule.scheduleJob({ cron: '5 0 * * *', tz: 'Asia/Taipei' }, () => resetDaily());
-// 每日 23:50（台北時間）統計與發獎勵
-schedule.scheduleJob({ cron: '50 23 * * *', tz: 'Asia/Taipei' }, () => summarizeDay(client));
+// 每日 00:05 依台北時區重置
+schedule.scheduleJob('5 0 * * *', { tz: 'Asia/Taipei' }, () => resetDaily());
+// 每日 23:50 依台北時區統計與發獎勵
+schedule.scheduleJob('50 23 * * *', { tz: 'Asia/Taipei' }, () => summarizeDay(client));
 
 app.get('/', (req, res) => res.send('LINE Bot Running.'));
 

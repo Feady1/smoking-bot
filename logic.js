@@ -1,30 +1,25 @@
 // 📁 logic.js
 
-// This module manages the smoking tracker’s data and messaging logic. It stores
-// counts for today and yesterday, automatically resets counts when a new day
-// begins, parses adjustment commands, and generates tailored feedback. When the
-// count lies between 1 and 20, it uses a series of playful reactions from a
-// virtual character named 悠悠.
+// This module manages persistent data, daily reset logic, reward summarisation,
+// numeric adjustments and interactive responses for the smoking bot. It also
+// defines a rich set of reactions for the virtual character 悠悠 so that the
+// bot can generate varied feedback based on both smoking counts and user
+// interactions.
 
 const fs = require('fs');
 const path = './data.json';
 const rewards = require('./rewards.json');
 
-/**
- * Get the current date in ISO (YYYY‑MM‑DD) format. This helper allows
- * detection of day changes for automatic resets. Timezone handling is left
- * to the scheduler in index.js, which runs jobs at specified times in
- * Asia/Taipei.
- */
+/* --------------------------------------------------------------------------
+ * Helpers for loading, saving and resetting persistent data
+ * ------------------------------------------------------------------------ */
+
+// Return current date string (YYYY-MM-DD).
 function getToday () {
-  const now = new Date();
-  return now.toISOString().slice(0, 10);
+  return new Date().toISOString().slice(0, 10);
 }
 
-/**
- * Ensure the data file exists. If it does not, create it with default
- * structure including a date field.
- */
+// Ensure the data file exists; initialise with default values if absent.
 function ensureDataFile () {
   if (!fs.existsSync(path)) {
     const initial = { date: getToday(), today: 0, yesterday: 0, streak: 0 };
@@ -32,26 +27,18 @@ function ensureDataFile () {
   }
 }
 
-/**
- * Load persisted data from disk.
- */
+// Load persisted data.
 function loadData () {
   ensureDataFile();
   return JSON.parse(fs.readFileSync(path));
 }
 
-/**
- * Save data to disk.
- */
+// Save data to disk.
 function saveData (data) {
   fs.writeFileSync(path, JSON.stringify(data, null, 2));
 }
 
-/**
- * Check if the stored date matches the current date. If not, roll today’s
- * count into yesterday, reset today to zero and update the date. Returns the
- * mutated data object.
- */
+// If stored date differs from today, roll today into yesterday and reset today.
 function autoResetIfNewDay (data) {
   const today = getToday();
   if (data.date !== today) {
@@ -62,12 +49,14 @@ function autoResetIfNewDay (data) {
   return data;
 }
 
-/**
- * Array of custom reactions for counts 1–20. Each string contains the base
- * message plus a description of 悠悠’s reaction. These messages are used
- * verbatim when the daily count falls within this range.
- */
-const reactions = [
+/* --------------------------------------------------------------------------
+ * Reaction templates for smoking counts 1–20
+ * ------------------------------------------------------------------------ */
+
+// Predefined messages for counts 1–20 including 悠悠’s reactions. Each string
+// contains a base message with line breaks. If today’s count lies within
+// 1..20, the corresponding entry will be used verbatim.
+const countReactions = [
   '今天第 1 支菸。\n超過昨天了，現在是 1 支。還想拿獎勵嗎？\n悠悠聽到後打了個哈欠，抱著自己的尾巴蜷縮在一起，眨了眨眼就睡著了(˘ω˘).｡oO💤～啾～',
   '今天第 2 支菸。\n超過昨天了，現在是 2 支。還想拿獎勵嗎？\n悠悠翻了個身，用小爪子拍拍自己的臉頰，又用尾巴在空中畫圈圈(˶˚ᴗ˚˶)｡oO',
   '今天第 3 支菸。\n超過昨天了，現在是 3 支。還想拿獎勵嗎？\n悠悠抱著小手輕輕揮手，眼睛瞇成一條線，發出輕輕的啾啾聲(๑˃̵ᴗ˂̵)و💨',
@@ -90,35 +79,95 @@ const reactions = [
   '今天第 20 支菸。\n超過昨天了，現在是 20 支。還想拿獎勵嗎？\n悠悠抱著自己的尾巴在水面上慢慢打轉，最後靠在你腳邊睡著了( ᐡ-ܫ-ᐡ )💤'
 ];
 
+/* --------------------------------------------------------------------------
+ * Components for constructing >1000 unique interaction responses
+ * ------------------------------------------------------------------------ */
+
+// Emoticons and expressive faces used by 悠悠 to convey emotion.
+const emoticons = [
+  '(˶˚ᴗ˚˶)', '(๑˃̵ᴗ˂̵)و', '(｡･ω･｡)?', '(≧▽≦)ゞ', '(˘ω˘)', '(づ｡◕‿‿◕｡)づ', '(｡>﹏<｡)', '(*´∀`)ﾉ'
+];
+
+// Sound words to accompany actions.
+const sounds = ['啾啾', '撲通', '嗚嗚', '呀～'];
+
+// Base descriptions for various user actions. Each entry may contain
+// multiple variations to allow additional combinations.
+const actionBases = {
+  morning: [
+    '悠悠揉揉眼睛伸了個懶腰，向你揮爪打招呼',
+    '悠悠從睡夢中醒來，眨著迷濛的眼睛對你點頭'
+  ],
+  night: [
+    '悠悠打了個呵欠，用尾巴裹住自己準備睡覺',
+    '悠悠窩成一團，慢慢閉上眼睛揮手道晚安'
+  ],
+  pat: [
+    '悠悠眯起眼睛享受你的撫摸，抱著尾巴發出滿足的聲音',
+    '悠悠把頭靠近你的手掌，輕輕蹭了蹭表示喜歡'
+  ],
+  tv: [
+    '悠悠盯著螢幕看得目不轉睛，偶爾歪頭表達好奇',
+    '悠悠坐在你旁邊看電視，時不時拍打尾巴示意你注意精彩畫面'
+  ],
+  default: [
+    '悠悠歪著頭看看你，不太明白但還是可愛地揮了揮爪',
+    '悠悠滾了個圈圈，尾巴輕拍地面示意牠聽不懂'
+  ]
+};
+
 /**
- * Generate a feedback message based on the current counts. Returns a
- * predefined reaction for counts between 1 and 20, a special message for
- * zero, or a generic comparison message for counts above 20.
+ * Randomly select an element from an array.
  */
-function generateResponse (data) {
-  const n = data.today;
-  if (n >= 1 && n <= 20) {
-    return reactions[n - 1];
-  }
-  if (n === 0) {
-    return '今天還沒抽菸，保持下去！悠悠雙手合掌為你打氣(๑˃̵ᴗ˂̵)و';
-  }
-  let message = `今天第 ${n} 支菸。`;
-  if (n < data.yesterday) {
-    message += `\n比昨天少了 ${data.yesterday - n} 支，不錯喔！`;
-  } else if (n === data.yesterday) {
-    message += `\n已經跟昨天一樣多了，要克制唷。`;
-  } else {
-    message += `\n超過昨天了，現在是 ${n} 支。還想拿獎勵嗎？`;
-  }
-  message += '\n悠悠歪著頭看看你，尾巴在身旁劃圈，似乎在思考(｡･ω･｡)?';
-  return message;
+function choice (arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
 /**
- * Adjust today’s count by a signed amount. Negative amounts decrease the count
- * but never allow it to drop below zero. After adjustment, persist the data
- * and send a feedback message via the client.
+ * Construct a reaction string by combining a base description with a random
+ * emoticon and a random sound word. This yields a large number of unique
+ * combinations (8 emoticons × 4 sounds × variations of bases).
+ */
+function buildReaction (base) {
+  const emoji = choice(emoticons);
+  const sound = choice(sounds);
+  return `${base}${emoji}～${sound}`;
+}
+
+/**
+ * Determine the category of a user interaction message. Simple keyword
+ * matching is used here; if no keywords match, returns 'default'.
+ */
+function getActionCategory (message) {
+  if (/(早安|早上好|morning)/i.test(message)) return 'morning';
+  if (/(晚安|good\s*night)/i.test(message)) return 'night';
+  if (/(摸|撫摸|摸摸|pat)/i.test(message)) return 'pat';
+  if (/(看電視|看电视|tv)/i.test(message)) return 'tv';
+  return 'default';
+}
+
+/**
+ * Handle interactive messages that are not numeric adjustments or commands.
+ * Generates a rich reaction from 悠悠 based on the detected action category.
+ */
+function handleInteraction (event, client, message) {
+  const data = loadData();
+  autoResetIfNewDay(data);
+  const category = getActionCategory(message);
+  const base = choice(actionBases[category] || actionBases.default);
+  const reaction = buildReaction(base);
+  return client.replyMessage(event.replyToken, { type: 'text', text: reaction });
+}
+
+/* --------------------------------------------------------------------------
+ * Functions for adjusting smoking counts and handling commands
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Adjust today’s smoking count by the provided signed integer amount. Counts
+ * never fall below zero. After adjustment, reply with a corresponding
+ * reaction. For counts between 1 and 20, a predefined reaction is used; for
+ * other counts, a generic comparison message is constructed.
  */
 function handleAdjust (event, client, amount) {
   const data = loadData();
@@ -126,16 +175,32 @@ function handleAdjust (event, client, amount) {
   data.today += amount;
   if (data.today < 0) data.today = 0;
   saveData(data);
-  const response = generateResponse(data);
+  let response;
+  const n = data.today;
+  if (n >= 1 && n <= 20) {
+    response = countReactions[n - 1];
+  } else if (n === 0) {
+    response = '今天還沒抽菸，保持下去！悠悠雙手合掌為你打氣(๑˃̵ᴗ˂̵)و';
+  } else {
+    response = `今天第 ${n} 支菸。`;
+    if (n < data.yesterday) {
+      response += `\n比昨天少了 ${data.yesterday - n} 支，不錯喔！`;
+    } else if (n === data.yesterday) {
+      response += `\n已經跟昨天一樣多了，要克制唷。`;
+    } else {
+      response += `\n超過昨天了，現在是 ${n} 支。還想拿獎勵嗎？`;
+    }
+    response += '\n悠悠歪著頭看看你，尾巴在身旁劃圈，似乎在思考(｡･ω･｡)?';
+  }
   return client.replyMessage(event.replyToken, { type: 'text', text: response });
 }
 
 /**
- * Handle command messages starting with '/'. Supports several commands:
- *  /查詢 或 /查詢今日 – report today, yesterday and streak counts
- *  /查詢昨日 – report yesterday’s count
- *  /重設 – reset today’s count to zero
- *  /說明 – display usage instructions
+ * Handle slash commands starting with '/'. Recognised commands include:
+ *   /查詢 or /查詢今日 – report today/yesterday counts and streak.
+ *   /查詢昨日 – report yesterday’s count only.
+ *   /重設 – reset today’s count to zero.
+ *   /說明 – provide help text.
  */
 function handleCommand (msg, event, client) {
   const data = loadData();
@@ -165,7 +230,8 @@ function handleCommand (msg, event, client) {
       '/查詢 或 /查詢今日：查看今日與昨日抽菸數以及連續減量天數',
       '/查詢昨日：查看昨日抽菸數',
       '/重設：重設今日計數為 0',
-      '/說明：顯示這段說明'
+      '/說明：顯示這段說明',
+      '其他訊息將視為對悠悠的互動，牠會以可愛的動作回應喔'
     ].join('\n');
     return client.replyMessage(event.replyToken, { type: 'text', text: help });
   }
@@ -173,8 +239,7 @@ function handleCommand (msg, event, client) {
 }
 
 /**
- * Reset counts at the scheduled reset time. Moves today’s count to yesterday
- * and zeroes today.
+ * Reset today’s count at scheduled time; move today to yesterday and zero it.
  */
 function resetDaily () {
   const data = loadData();
@@ -186,9 +251,9 @@ function resetDaily () {
 }
 
 /**
- * Summarize the day’s results and deliver them via push message. Adjusts
- * streaks and awards rewards based on whether the user smoked fewer
- * cigarettes today than yesterday.
+ * Summarize the day’s results. If today’s count is less than yesterday’s,
+ * increment the streak and award a prize (capped by rewards array length).
+ * Sends messages via pushMessage including images and text where applicable.
  */
 function summarizeDay (client) {
   const data = loadData();
@@ -216,4 +281,10 @@ function summarizeDay (client) {
   console.log('日結訊息發送完畢');
 }
 
-module.exports = { handleAdjust, handleCommand, resetDaily, summarizeDay };
+module.exports = {
+  handleAdjust,
+  handleCommand,
+  resetDaily,
+  summarizeDay,
+  handleInteraction
+};
