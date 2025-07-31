@@ -2,8 +2,8 @@
 const express = require('express');
 const line = require('@line/bot-sdk');
 const schedule = require('node-schedule');
-const fs = require('fs');
-const { handlePlusOne, handleCommand, resetDaily, summarizeDay } = require('./logic');
+// Remove unused fs import; bring in new handler from logic.js
+const { handleAdjust, handleCommand, resetDaily, summarizeDay } = require('./logic');
 require('dotenv').config();
 
 const app = express();
@@ -21,9 +21,13 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
   const results = await Promise.all(events.map(event => {
     if (event.type === 'message' && event.message.type === 'text') {
       const msg = event.message.text.trim();
-      if (msg === '+1') return handlePlusOne(event, client);
-      if (/^\+\d+$/.test(msg)) return handlePlusOne(event, client, parseInt(msg.substring(1)));
-      if (/^\/[-+]?\d+$/.test(msg)) return handlePlusOne(event, client, parseInt(msg.substring(1)));
+      // Adjust counts when message starts with optional '/' followed by '+' or '-' and digits
+      if (/^\/?[+-]\d+$/.test(msg)) {
+        // Remove leading '/' if present before parsing integer
+        const cleaned = msg.startsWith('/') ? msg.slice(1) : msg;
+        return handleAdjust(event, client, parseInt(cleaned, 10));
+      }
+      // Delegate commands beginning with '/' that are not numeric adjustments
       if (msg.startsWith('/')) return handleCommand(msg, event, client);
     }
     return Promise.resolve(null);
@@ -31,13 +35,11 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
   res.json(results);
 });
 
-// 每日 00:05 重置
-schedule.scheduleJob('5 0 * * *', () => resetDaily());
-// 每日 23:50 統計與發獎勵
-schedule.scheduleJob('50 23 * * *', () => summarizeDay(client));
+// 每日 00:05（台北時間）重置
+schedule.scheduleJob({ cron: '5 0 * * *', tz: 'Asia/Taipei' }, () => resetDaily());
+// 每日 23:50（台北時間）統計與發獎勵
+schedule.scheduleJob({ cron: '50 23 * * *', tz: 'Asia/Taipei' }, () => summarizeDay(client));
 
 app.get('/', (req, res) => res.send('LINE Bot Running.'));
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Server running on port ${port}`);
-});
+app.listen(port, () => console.log(`Bot running on ${port}`));
