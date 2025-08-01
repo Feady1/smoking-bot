@@ -1,5 +1,6 @@
 // 📁 logic.js
 
+
 // This module manages persistent data, daily reset logic, reward summarisation,
 // numeric adjustments and interactive responses for the smoking bot. It also
 // defines a rich set of reactions for the virtual character 悠悠 so that the
@@ -28,7 +29,7 @@ function ensureDataFile () {
   }
 }
 // Load persisted data.
-ffunction loadData () {
+function loadData () {
   ensureDataFile();
   const data = JSON.parse(fs.readFileSync(path));
   let updated = false;
