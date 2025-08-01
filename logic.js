@@ -29,9 +29,31 @@ function ensureDataFile () {
 }
 
 // Load persisted data.
-function loadData () {
+ffunction loadData () {
   ensureDataFile();
-  return JSON.parse(fs.readFileSync(path));
+  const data = JSON.parse(fs.readFileSync(path));
+  let updated = false;
+  // Guarantee presence of essential keys
+  if (data.date == null || data.date === '') {
+    data.date = getToday();
+    updated = true;
+  }
+  if (typeof data.today !== 'number') {
+    data.today = 0;
+    updated = true;
+  }
+  if (typeof data.yesterday !== 'number') {
+    data.yesterday = 0;
+    updated = true;
+  }
+  if (typeof data.streak !== 'number') {
+    data.streak = 0;
+    updated = true;
+  }
+  if (updated) {
+    saveData(data);
+  }
+  return data;
 }
 
 // Save data to disk.
@@ -575,12 +597,20 @@ async function handleCommand (msg, event, client) {
  */
 function resetDaily () {
   const data = loadData();
-  autoResetIfNewDay(data);
-  data.yesterday = data.today;
-  data.today = 0;
-  saveData(data);
-  console.log('每日重置完成');
+  const todayStr = getToday();
+  // Only perform a reset if the stored date differs from the current date
+  if (data.date !== todayStr) {
+    data.yesterday = data.today;
+    data.today = 0;
+    data.date = todayStr;
+    saveData(data);
+    console.log('每日重置完成');
+  } else {
+    // If called when no date change has occurred, do nothing
+    console.log('重置跳過：日期相同');
+  }
 }
+
 
 /**
  * Summarize the day’s results. If today’s count is less than yesterday’s,
