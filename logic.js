@@ -27,7 +27,6 @@ function ensureDataFile () {
     fs.writeFileSync(path, JSON.stringify(initial, null, 2));
   }
 }
-
 // Load persisted data.
 ffunction loadData () {
   ensureDataFile();
@@ -70,6 +69,8 @@ function autoResetIfNewDay (data) {
     data.date = today;
   }
   return data;
+
+  
 }
 
 /* --------------------------------------------------------------------------
